@@ -1,0 +1,445 @@
+# Pipeline de Infraestrutura - Tiro Esportivo Brasileiro
+# TIROESPORTIVOBRASILEIRO.COM.BR
+# Infrastructure as Code (IaC) Pipeline
+
+trigger:
+  branches:
+    include:
+    - main
+  paths:
+    include:
+    - infrastructure/*
+    - azure-devops/infrastructure-pipeline.yml
+
+pr: none
+
+variables:
+  # Configurações do projeto
+  subscriptionId: '130706ec-b9d5-4554-8be1-ef855c2cf41a'
+  resourceGroupName: 'tiroesportivo'
+  location: 'East US'
+  domainName: 'tiroesportivobrasileiro.com.br'
+  
+  # Configurações Azure
+  azureSubscription: 'Azure-Connection'
+  
+  # Configurações de infraestrutura
+  appServicePlan: 'tiroesportivo-plan'
+  webAppName: 'tiroesportivobrasileiro'
+  webAppNameDev: 'tiroesportivobrasileiro-dev'
+  sku: 'S1'
+
+stages:
+- stage: ValidateInfrastructure
+  displayName: 'Validate Infrastructure'
+  jobs:
+  - job: ValidateTemplates
+    displayName: 'Validate ARM Templates'
+    pool:
+      vmImage: 'ubuntu-latest'
+    
+    steps:
+    - task: AzureCLI@2
+      inputs:
+        azureSubscription: '$(azureSubscription)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          echo "Validando templates de infraestrutura..."
+          
+          # Validar se Resource Group existe
+          if ! az group show --name $(resourceGroupName) &> /dev/null; then
+            echo "Resource Group $(resourceGroupName) não existe. Será criado."
+          else
+            echo "✅ Resource Group $(resourceGroupName) já existe."
+          fi
+          
+          # Validar configurações DNS
+          echo "Verificando configurações DNS..."
+          if az network dns zone show --resource-group $(resourceGroupName) --name $(domainName) &> /dev/null; then
+            echo "✅ DNS Zone $(domainName) já existe."
+            
+            # Listar Name Servers
+            echo "Name Servers atuais:"
+            az network dns zone show --resource-group $(resourceGroupName) --name $(domainName) --query "nameServers" -o table
+          else
+            echo "DNS Zone $(domainName) não existe. Será criada."
+          fi
+          
+          # Validar App Service Plan
+          if az appservice plan show --name $(appServicePlan) --resource-group $(resourceGroupName) &> /dev/null; then
+            echo "✅ App Service Plan $(appServicePlan) já existe."
+          else
+            echo "App Service Plan $(appServicePlan) não existe. Será criado."
+          fi
+      displayName: 'Validate Current Infrastructure'
+
+- stage: DeployInfrastructure
+  displayName: 'Deploy Infrastructure'
+  dependsOn: ValidateInfrastructure
+  jobs:
+  - deployment: DeployInfra
+    displayName: 'Deploy Infrastructure Components'
+    pool:
+      vmImage: 'ubuntu-latest'
+    environment: 'infrastructure'
+    
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                echo "🏗️ Criando infraestrutura base..."
+                
+                # 1. Criar Resource Group
+                echo "Criando Resource Group..."
+                az group create \
+                  --name $(resourceGroupName) \
+                  --location "$(location)" \
+                  --tags \
+                    Project="TiroEsportivoBrasileiro" \
+                    Environment="Production" \
+                    Owner="DevOps" \
+                    CostCenter="IT"
+                
+                # 2. Criar DNS Zone
+                echo "Criando DNS Zone..."
+                if ! az network dns zone show --resource-group $(resourceGroupName) --name $(domainName) &> /dev/null; then
+                  az network dns zone create \
+                    --resource-group $(resourceGroupName) \
+                    --name $(domainName) \
+                    --tags \
+                      Project="TiroEsportivoBrasileiro" \
+                      Environment="Production"
+                  
+                  echo "✅ DNS Zone criada com sucesso!"
+                  
+                  # Obter e exibir Name Servers
+                  echo "📋 Name Servers (configure no registrador do domínio):"
+                  az network dns zone show \
+                    --resource-group $(resourceGroupName) \
+                    --name $(domainName) \
+                    --query "nameServers" -o table
+                else
+                  echo "✅ DNS Zone já existe."
+                fi
+                
+                # 3. Criar registros DNS básicos
+                echo "Configurando registros DNS básicos..."
+                
+                # Registro CNAME para www
+                if ! az network dns record-set cname show --resource-group $(resourceGroupName) --zone-name $(domainName) --name "www" &> /dev/null; then
+                  az network dns record-set cname create \
+                    --resource-group $(resourceGroupName) \
+                    --zone-name $(domainName) \
+                    --name "www" \
+                    --ttl 3600
+                  
+                  az network dns record-set cname set-record \
+                    --resource-group $(resourceGroupName) \
+                    --zone-name $(domainName) \
+                    --record-set-name "www" \
+                    --cname $(domainName)
+                  
+                  echo "✅ Registro CNAME para www criado."
+                fi
+                
+                # Registro TXT para verificação
+                if ! az network dns record-set txt show --resource-group $(resourceGroupName) --zone-name $(domainName) --name "@" &> /dev/null; then
+                  az network dns record-set txt create \
+                    --resource-group $(resourceGroupName) \
+                    --zone-name $(domainName) \
+                    --name "@" \
+                    --ttl 3600
+                  
+                  az network dns record-set txt add-record \
+                    --resource-group $(resourceGroupName) \
+                    --zone-name $(domainName) \
+                    --record-set-name "@" \
+                    --value "v=spf1 -all"
+                  
+                  echo "✅ Registro TXT básico criado."
+                fi
+                
+                # 4. Criar App Service Plan
+                echo "Criando App Service Plan..."
+                if ! az appservice plan show --name $(appServicePlan) --resource-group $(resourceGroupName) &> /dev/null; then
+                  az appservice plan create \
+                    --name $(appServicePlan) \
+                    --resource-group $(resourceGroupName) \
+                    --location "$(location)" \
+                    --sku $(sku) \
+                    --is-linux \
+                    --tags \
+                      Project="TiroEsportivoBrasileiro" \
+                      Environment="Production"
+                  
+                  echo "✅ App Service Plan criado com sucesso!"
+                else
+                  echo "✅ App Service Plan já existe."
+                fi
+                
+                # 5. Criar Web App de Produção
+                echo "Criando Web App de produção..."
+                if ! az webapp show --name $(webAppName) --resource-group $(resourceGroupName) &> /dev/null; then
+                  az webapp create \
+                    --name $(webAppName) \
+                    --resource-group $(resourceGroupName) \
+                    --plan $(appServicePlan) \
+                    --runtime "PYTHON:3.11" \
+                    --tags \
+                      Project="TiroEsportivoBrasileiro" \
+                      Environment="Production"
+                  
+                  # Configurar variáveis de ambiente básicas
+                  az webapp config appsettings set \
+                    --name $(webAppName) \
+                    --resource-group $(resourceGroupName) \
+                    --settings \
+                      FLASK_ENV=production \
+                      CUSTOM_DOMAIN="$(domainName)" \
+                      AZURE_DNS_ENABLED=true \
+                      FORCE_HTTPS=true \
+                      SCM_DO_BUILD_DURING_DEPLOYMENT=true \
+                      ENABLE_ORYX_BUILD=true \
+                      WEBSITES_ENABLE_APP_SERVICE_STORAGE=true
+                  
+                  # Configurar startup command
+                  az webapp config set \
+                    --name $(webAppName) \
+                    --resource-group $(resourceGroupName) \
+                    --startup-file "startup.py"
+                  
+                  echo "✅ Web App de produção criada!"
+                else
+                  echo "✅ Web App de produção já existe."
+                fi
+                
+                # 6. Criar Web App de Desenvolvimento
+                echo "Criando Web App de desenvolvimento..."
+                if ! az webapp show --name $(webAppNameDev) --resource-group $(resourceGroupName) &> /dev/null; then
+                  az webapp create \
+                    --name $(webAppNameDev) \
+                    --resource-group $(resourceGroupName) \
+                    --plan $(appServicePlan) \
+                    --runtime "PYTHON:3.11" \
+                    --tags \
+                      Project="TiroEsportivoBrasileiro" \
+                      Environment="Development"
+                  
+                  # Configurar variáveis de ambiente para desenvolvimento
+                  az webapp config appsettings set \
+                    --name $(webAppNameDev) \
+                    --resource-group $(resourceGroupName) \
+                    --settings \
+                      FLASK_ENV=development \
+                      CUSTOM_DOMAIN="$(webAppNameDev).azurewebsites.net" \
+                      AZURE_DNS_ENABLED=false \
+                      SCM_DO_BUILD_DURING_DEPLOYMENT=true \
+                      ENABLE_ORYX_BUILD=true
+                  
+                  # Configurar startup command
+                  az webapp config set \
+                    --name $(webAppNameDev) \
+                    --resource-group $(resourceGroupName) \
+                    --startup-file "startup.py"
+                  
+                  echo "✅ Web App de desenvolvimento criada!"
+                else
+                  echo "✅ Web App de desenvolvimento já existe."
+                fi
+                
+                echo ""
+                echo "🎉 Infraestrutura criada com sucesso!"
+                echo ""
+                echo "📊 Resumo dos recursos criados:"
+                echo "- Resource Group: $(resourceGroupName)"
+                echo "- DNS Zone: $(domainName)"
+                echo "- App Service Plan: $(appServicePlan)"
+                echo "- Web App Produção: $(webAppName)"
+                echo "- Web App Desenvolvimento: $(webAppNameDev)"
+                echo ""
+                echo "🌐 URLs:"
+                echo "- Produção: https://$(domainName) (após configurar DNS)"
+                echo "- Desenvolvimento: https://$(webAppNameDev).azurewebsites.net"
+                echo ""
+            displayName: 'Create Base Infrastructure'
+          
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                echo "🔒 Configurando segurança e monitoramento..."
+                
+                # Configurar Application Insights
+                echo "Criando Application Insights..."
+                if ! az monitor app-insights component show --app "tiroesportivo-insights" --resource-group $(resourceGroupName) &> /dev/null; then
+                  az monitor app-insights component create \
+                    --app "tiroesportivo-insights" \
+                    --location "$(location)" \
+                    --resource-group $(resourceGroupName) \
+                    --application-type web \
+                    --tags \
+                      Project="TiroEsportivoBrasileiro" \
+                      Environment="Production"
+                  
+                  # Obter Instrumentation Key
+                  INSTRUMENTATION_KEY=$(az monitor app-insights component show \
+                    --app "tiroesportivo-insights" \
+                    --resource-group $(resourceGroupName) \
+                    --query "instrumentationKey" -o tsv)
+                  
+                  # Configurar Application Insights nas Web Apps
+                  az webapp config appsettings set \
+                    --name $(webAppName) \
+                    --resource-group $(resourceGroupName) \
+                    --settings APPINSIGHTS_INSTRUMENTATIONKEY="$INSTRUMENTATION_KEY"
+                  
+                  az webapp config appsettings set \
+                    --name $(webAppNameDev) \
+                    --resource-group $(resourceGroupName) \
+                    --settings APPINSIGHTS_INSTRUMENTATIONKEY="$INSTRUMENTATION_KEY"
+                  
+                  echo "✅ Application Insights configurado!"
+                else
+                  echo "✅ Application Insights já existe."
+                fi
+                
+                # Configurar alertas básicos
+                echo "Configurando alertas de monitoramento..."
+                
+                # Alerta para alta utilização de CPU
+                az monitor metrics alert create \
+                  --name "High-CPU-$(webAppName)" \
+                  --resource-group $(resourceGroupName) \
+                  --scopes "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/$(resourceGroupName)/providers/Microsoft.Web/sites/$(webAppName)" \
+                  --condition "avg Percentage CPU > 80" \
+                  --description "Alerta quando CPU > 80%" \
+                  --evaluation-frequency 5m \
+                  --window-size 15m \
+                  --severity 2 || echo "Alerta de CPU já existe ou erro na criação"
+                
+                # Alerta para falhas HTTP
+                az monitor metrics alert create \
+                  --name "HTTP-Errors-$(webAppName)" \
+                  --resource-group $(resourceGroupName) \
+                  --scopes "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/$(resourceGroupName)/providers/Microsoft.Web/sites/$(webAppName)" \
+                  --condition "total Http5xx > 10" \
+                  --description "Alerta quando HTTP 5xx > 10" \
+                  --evaluation-frequency 5m \
+                  --window-size 15m \
+                  --severity 1 || echo "Alerta de HTTP já existe ou erro na criação"
+                
+                echo "✅ Alertas de monitoramento configurados!"
+                
+                # Configurar backup automático (se suportado pelo plano)
+                echo "Configurando backup automático..."
+                # Nota: Backup automático requer plano Standard ou superior
+                # az webapp config backup create seria usado aqui
+                
+                echo "🔒 Configurações de segurança e monitoramento concluídas!"
+            displayName: 'Configure Security and Monitoring'
+
+- stage: ValidateDeployment
+  displayName: 'Validate Deployment'
+  dependsOn: DeployInfrastructure
+  jobs:
+  - job: ValidateInfra
+    displayName: 'Validate Infrastructure Deployment'
+    pool:
+      vmImage: 'ubuntu-latest'
+    
+    steps:
+    - task: AzureCLI@2
+      inputs:
+        azureSubscription: '$(azureSubscription)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          echo "🔍 Validando infraestrutura deployada..."
+          
+          # Verificar Resource Group
+          if az group show --name $(resourceGroupName) &> /dev/null; then
+            echo "✅ Resource Group: $(resourceGroupName)"
+          else
+            echo "❌ Resource Group não encontrado!"
+            exit 1
+          fi
+          
+          # Verificar DNS Zone
+          if az network dns zone show --resource-group $(resourceGroupName) --name $(domainName) &> /dev/null; then
+            echo "✅ DNS Zone: $(domainName)"
+            
+            # Mostrar Name Servers
+            echo "📋 Name Servers:"
+            az network dns zone show --resource-group $(resourceGroupName) --name $(domainName) --query "nameServers" -o table
+          else
+            echo "❌ DNS Zone não encontrada!"
+            exit 1
+          fi
+          
+          # Verificar App Service Plan
+          if az appservice plan show --name $(appServicePlan) --resource-group $(resourceGroupName) &> /dev/null; then
+            echo "✅ App Service Plan: $(appServicePlan)"
+            
+            # Mostrar detalhes do plano
+            az appservice plan show --name $(appServicePlan) --resource-group $(resourceGroupName) --query "{name:name,sku:sku.name,location:location}" -o table
+          else
+            echo "❌ App Service Plan não encontrado!"
+            exit 1
+          fi
+          
+          # Verificar Web Apps
+          if az webapp show --name $(webAppName) --resource-group $(resourceGroupName) &> /dev/null; then
+            echo "✅ Web App Produção: $(webAppName)"
+            
+            # Mostrar URL
+            PROD_URL=$(az webapp show --name $(webAppName) --resource-group $(resourceGroupName) --query "defaultHostName" -o tsv)
+            echo "   URL: https://$PROD_URL"
+          else
+            echo "❌ Web App de produção não encontrada!"
+            exit 1
+          fi
+          
+          if az webapp show --name $(webAppNameDev) --resource-group $(resourceGroupName) &> /dev/null; then
+            echo "✅ Web App Desenvolvimento: $(webAppNameDev)"
+            
+            # Mostrar URL
+            DEV_URL=$(az webapp show --name $(webAppNameDev) --resource-group $(resourceGroupName) --query "defaultHostName" -o tsv)
+            echo "   URL: https://$DEV_URL"
+          else
+            echo "❌ Web App de desenvolvimento não encontrada!"
+            exit 1
+          fi
+          
+          # Verificar Application Insights
+          if az monitor app-insights component show --app "tiroesportivo-insights" --resource-group $(resourceGroupName) &> /dev/null; then
+            echo "✅ Application Insights: tiroesportivo-insights"
+          else
+            echo "⚠️ Application Insights não encontrado (pode ter falhado na criação)"
+          fi
+          
+          echo ""
+          echo "🎉 Validação da infraestrutura concluída com sucesso!"
+          echo ""
+          echo "📊 Resumo final:"
+          echo "- Resource Group: $(resourceGroupName)"
+          echo "- DNS Zone: $(domainName)"
+          echo "- App Service Plan: $(appServicePlan) ($(sku))"
+          echo "- Web App Produção: https://$PROD_URL"
+          echo "- Web App Desenvolvimento: https://$DEV_URL"
+          echo "- Application Insights: Configurado"
+          echo ""
+          echo "🔧 Próximos passos:"
+          echo "1. Configure os Name Servers no registrador do domínio"
+          echo "2. Execute o pipeline de aplicação para fazer deploy do código"
+          echo "3. Configure domínio personalizado e SSL após propagação DNS"
+      displayName: 'Validate All Infrastructure Components'
+

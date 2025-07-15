@@ -1,0 +1,44 @@
+# azure-container.yaml - Configuração do Azure Container Instances
+apiVersion: 2021-03-01
+location: eastus
+name: shooting-sports-container
+properties:
+  containers:
+  - name: shooting-sports-app
+    properties:
+      image: shootingsports/app:latest
+      resources:
+        requests:
+          cpu: 1.0
+          memoryInGb: 1.5
+      ports:
+      - protocol: tcp
+        port: 8080
+      environmentVariables:
+      - name: FLASK_ENV
+        value: production
+      - name: PORT
+        value: '8080'
+      - name: DATABASE_URL
+        value: sqlite:///instance/database.db
+      volumeMounts:
+      - name: database-volume
+        mountPath: /app/instance
+  osType: Linux
+  restartPolicy: Always
+  ipAddress:
+    type: Public
+    ports:
+    - protocol: tcp
+      port: 8080
+    dnsNameLabel: shooting-sports-app
+  volumes:
+  - name: database-volume
+    azureFile:
+      shareName: shooting-sports-data
+      storageAccountName: shootingsportstorage
+      storageAccountKey: "[STORAGE_ACCOUNT_KEY]"
+tags:
+  Environment: production
+  Application: shooting-sports
+

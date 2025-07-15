@@ -1,0 +1,58 @@
+# app.yaml - Configuração do Google App Engine
+runtime: python311
+
+# Configurações de instância
+instance_class: F2
+automatic_scaling:
+  min_instances: 1
+  max_instances: 10
+  target_cpu_utilization: 0.6
+
+# Variáveis de ambiente
+env_variables:
+  FLASK_ENV: production
+  DATABASE_URL: sqlite:///instance/database.db
+
+# Handlers para arquivos estáticos
+handlers:
+  # Servir arquivos estáticos do frontend
+  - url: /static
+    static_dir: static
+    secure: always
+
+  # Servir arquivos de build do React
+  - url: /assets
+    static_dir: static/assets
+    secure: always
+
+  # Redirecionar todas as outras rotas para o Flask
+  - url: /.*
+    script: auto
+    secure: always
+
+# Configurações de rede
+network:
+  forwarded_ports:
+    - 8080
+
+# Configurações de recursos
+resources:
+  cpu: 1
+  memory_gb: 0.5
+  disk_size_gb: 10
+
+# Configurações de saúde
+readiness_check:
+  path: "/api/health"
+  check_interval_sec: 5
+  timeout_sec: 4
+  failure_threshold: 2
+  success_threshold: 2
+
+liveness_check:
+  path: "/api/health"
+  check_interval_sec: 30
+  timeout_sec: 4
+  failure_threshold: 4
+  success_threshold: 2
+

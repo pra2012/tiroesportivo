@@ -1,0 +1,86 @@
+# Dockerfile.azure - Otimizado para Microsoft Azure
+# Multi-stage build para otimizar tamanho da imagem
+
+# Stage 1: Build do Frontend
+FROM node:20-alpine AS frontend-builder
+WORKDIR /frontend
+
+# Copiar arquivos de dependências
+COPY shooting-sports-frontend/package*.json ./
+COPY shooting-sports-frontend/pnpm-lock.yaml* ./
+
+# Instalar dependências
+RUN npm ci --only=production --silent
+
+# Copiar código fonte e fazer build
+COPY shooting-sports-frontend/ ./
+RUN npm run build
+
+# Stage 2: Setup do Backend Python
+FROM python:3.11-slim AS backend-builder
+
+# Instalar dependências do sistema necessárias para build
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Configurar diretório de trabalho
+WORKDIR /app
+
+# Copiar e instalar dependências Python
+COPY shooting-sports-app/requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+# Stage 3: Imagem final de produção
+FROM python:3.11-slim AS production
+
+# Instalar apenas dependências runtime necessárias
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Criar usuário não-root para segurança
+RUN useradd --create-home --shell /bin/bash --uid 1000 appuser
+
+# Configurar diretório de trabalho
+WORKDIR /app
+
+# Copiar dependências Python do stage anterior
+COPY --from=backend-builder /root/.local /home/appuser/.local
+
+# Copiar código do backend
+COPY shooting-sports-app/ .
+
+# Copiar build do frontend para servir como arquivos estáticos
+COPY --from=frontend-builder /frontend/dist ./static
+
+# Criar diretório para banco de dados com permissões corretas
+RUN mkdir -p instance && chown -R appuser:appuser /app
+
+# Mudar para usuário não-root
+USER appuser
+
+# Adicionar diretório local do usuário ao PATH
+ENV PATH=/home/appuser/.local/bin:$PATH
+
+# Criar banco de dados inicial
+RUN python populate_db.py
+
+# Configurar variáveis de ambiente para Azure
+ENV FLASK_ENV=production
+ENV PORT=8080
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+# Expor porta padrão do Azure
+EXPOSE 8080
+
+# Health check para Azure Container Instances
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/api/health || exit 1
+
+# Comando para iniciar aplicação com Gunicorn
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--threads", "4", "--timeout", "120", "--keep-alive", "2", "--max-requests", "1000", "--max-requests-jitter", "100", "src.main:app"]
+

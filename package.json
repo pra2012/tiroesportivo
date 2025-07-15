@@ -1,0 +1,25 @@
+{
+  "name": "shooting-sports-azure",
+  "version": "1.0.0",
+  "description": "Shooting Sports - Controle de Tiro Esportivo para Azure Web App",
+  "main": "startup.py",
+  "scripts": {
+    "start": "python startup.py",
+    "build": "echo 'Build completed'",
+    "install": "pip install -r requirements.txt"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "python": ">=3.11.0"
+  },
+  "keywords": [
+    "shooting",
+    "sports",
+    "flask",
+    "azure",
+    "webapp"
+  ],
+  "author": "Shooting Sports Team",
+  "license": "MIT"
+}
+

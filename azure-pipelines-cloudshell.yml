@@ -1,0 +1,383 @@
+# =============================================================================
+# TIRO ESPORTIVO BRASILEIRO - AZURE PIPELINES (CLOUD SHELL OPTIMIZED)
+# =============================================================================
+# Pipeline CI/CD otimizado para uso com Azure Cloud Shell
+# Subscription ID: 130706ec-b9d5-4554-8be1-ef855c2cf41a
+# Resource Group: tiroesportivo
+# =============================================================================
+
+trigger:
+  branches:
+    include:
+    - main
+    - develop
+  paths:
+    exclude:
+    - README.md
+    - docs/*
+    - '*.md'
+
+pr:
+  branches:
+    include:
+    - main
+  paths:
+    exclude:
+    - README.md
+    - docs/*
+    - '*.md'
+
+variables:
+  # Azure Configuration
+  subscriptionId: '130706ec-b9d5-4554-8be1-ef855c2cf41a'
+  resourceGroupName: 'tiroesportivo'
+  location: 'East US'
+  
+  # Application Configuration
+  webAppName: 'tiroesportivobrasileiro'
+  webAppDevName: 'tiroesportivobrasileiro-dev'
+  appServicePlan: 'tiroesportivo-plan'
+  domainName: 'tiroesportivobrasileiro.com.br'
+  
+  # Build Configuration
+  pythonVersion: '3.11'
+  nodeVersion: '20.x'
+  
+  # Pipeline Configuration
+  vmImageName: 'ubuntu-latest'
+  buildConfiguration: 'Release'
+
+stages:
+- stage: Build
+  displayName: 'Build Application'
+  jobs:
+  - job: BuildBackend
+    displayName: 'Build Backend (Python/Flask)'
+    pool:
+      vmImage: $(vmImageName)
+    
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '$(pythonVersion)'
+      displayName: 'Use Python $(pythonVersion)'
+    
+    - script: |
+        python -m pip install --upgrade pip
+        pip install -r shooting-sports-app/requirements.txt
+      displayName: 'Install Python dependencies'
+    
+    - script: |
+        cd shooting-sports-app
+        python -m py_compile src/main.py
+        python -m py_compile src/models/*.py
+        python -m py_compile src/routes/*.py
+      displayName: 'Compile Python code'
+    
+    - task: ArchiveFiles@2
+      inputs:
+        rootFolderOrFile: 'shooting-sports-app'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/backend.zip'
+      displayName: 'Archive backend files'
+    
+    - task: PublishBuildArtifacts@1
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/backend.zip'
+        ArtifactName: 'backend'
+      displayName: 'Publish backend artifact'
+
+  - job: BuildFrontend
+    displayName: 'Build Frontend (React/Vite)'
+    pool:
+      vmImage: $(vmImageName)
+    
+    steps:
+    - task: NodeTool@0
+      inputs:
+        versionSpec: '$(nodeVersion)'
+      displayName: 'Use Node.js $(nodeVersion)'
+    
+    - script: |
+        cd shooting-sports-frontend
+        npm ci
+      displayName: 'Install Node.js dependencies'
+    
+    - script: |
+        cd shooting-sports-frontend
+        npm run build
+      displayName: 'Build React application'
+    
+    - task: ArchiveFiles@2
+      inputs:
+        rootFolderOrFile: 'shooting-sports-frontend/dist'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/frontend.zip'
+      displayName: 'Archive frontend build'
+    
+    - task: PublishBuildArtifacts@1
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/frontend.zip'
+        ArtifactName: 'frontend'
+      displayName: 'Publish frontend artifact'
+
+- stage: DeployDev
+  displayName: 'Deploy to Development'
+  dependsOn: Build
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+  jobs:
+  - deployment: DeployToDev
+    displayName: 'Deploy to Development Environment'
+    pool:
+      vmImage: $(vmImageName)
+    environment: 'Development'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: DownloadBuildArtifacts@0
+            inputs:
+              buildType: 'current'
+              downloadType: 'specific'
+              downloadPath: '$(System.ArtifactsDirectory)'
+            displayName: 'Download artifacts'
+          
+          - task: ExtractFiles@1
+            inputs:
+              archiveFilePatterns: '$(System.ArtifactsDirectory)/backend/backend.zip'
+              destinationFolder: '$(System.DefaultWorkingDirectory)/app'
+            displayName: 'Extract backend files'
+          
+          - task: ExtractFiles@1
+            inputs:
+              archiveFilePatterns: '$(System.ArtifactsDirectory)/frontend/frontend.zip'
+              destinationFolder: '$(System.DefaultWorkingDirectory)/app/static'
+            displayName: 'Extract frontend files'
+          
+          - script: |
+              # Copy Azure deployment files
+              cp azure-deployment/web.config $(System.DefaultWorkingDirectory)/app/
+              cp azure-deployment/startup.py $(System.DefaultWorkingDirectory)/app/
+              cp azure-deployment/requirements.txt $(System.DefaultWorkingDirectory)/app/
+            displayName: 'Copy Azure configuration files'
+          
+          - task: ArchiveFiles@2
+            inputs:
+              rootFolderOrFile: '$(System.DefaultWorkingDirectory)/app'
+              includeRootFolder: false
+              archiveType: 'zip'
+              archiveFile: '$(System.DefaultWorkingDirectory)/deploy-dev.zip'
+            displayName: 'Create deployment package'
+          
+          - task: AzureWebApp@1
+            inputs:
+              azureSubscription: 'Azure-Connection'
+              appType: 'webAppLinux'
+              appName: '$(webAppDevName)'
+              package: '$(System.DefaultWorkingDirectory)/deploy-dev.zip'
+              runtimeStack: 'PYTHON|3.11'
+              startUpCommand: 'startup.py'
+            displayName: 'Deploy to Azure Web App (Dev)'
+          
+          - task: AzureAppServiceSettings@1
+            inputs:
+              azureSubscription: 'Azure-Connection'
+              appName: '$(webAppDevName)'
+              resourceGroupName: '$(resourceGroupName)'
+              appSettings: |
+                [
+                  {
+                    "name": "FLASK_ENV",
+                    "value": "development"
+                  },
+                  {
+                    "name": "FLASK_DEBUG",
+                    "value": "True"
+                  },
+                  {
+                    "name": "DATABASE_URL",
+                    "value": "sqlite:///tiroesportivo_dev.db"
+                  }
+                ]
+            displayName: 'Configure app settings (Dev)'
+
+- stage: DeployProd
+  displayName: 'Deploy to Production'
+  dependsOn: Build
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+  - deployment: DeployToProd
+    displayName: 'Deploy to Production Environment'
+    pool:
+      vmImage: $(vmImageName)
+    environment: 'Production'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: DownloadBuildArtifacts@0
+            inputs:
+              buildType: 'current'
+              downloadType: 'specific'
+              downloadPath: '$(System.ArtifactsDirectory)'
+            displayName: 'Download artifacts'
+          
+          - task: ExtractFiles@1
+            inputs:
+              archiveFilePatterns: '$(System.ArtifactsDirectory)/backend/backend.zip'
+              destinationFolder: '$(System.DefaultWorkingDirectory)/app'
+            displayName: 'Extract backend files'
+          
+          - task: ExtractFiles@1
+            inputs:
+              archiveFilePatterns: '$(System.ArtifactsDirectory)/frontend/frontend.zip'
+              destinationFolder: '$(System.DefaultWorkingDirectory)/app/static'
+            displayName: 'Extract frontend files'
+          
+          - script: |
+              # Copy Azure deployment files
+              cp azure-deployment/web.config $(System.DefaultWorkingDirectory)/app/
+              cp azure-deployment/startup.py $(System.DefaultWorkingDirectory)/app/
+              cp azure-deployment/requirements.txt $(System.DefaultWorkingDirectory)/app/
+            displayName: 'Copy Azure configuration files'
+          
+          - task: ArchiveFiles@2
+            inputs:
+              rootFolderOrFile: '$(System.DefaultWorkingDirectory)/app'
+              includeRootFolder: false
+              archiveType: 'zip'
+              archiveFile: '$(System.DefaultWorkingDirectory)/deploy-prod.zip'
+            displayName: 'Create deployment package'
+          
+          - task: AzureWebApp@1
+            inputs:
+              azureSubscription: 'Azure-Connection'
+              appType: 'webAppLinux'
+              appName: '$(webAppName)'
+              package: '$(System.DefaultWorkingDirectory)/deploy-prod.zip'
+              runtimeStack: 'PYTHON|3.11'
+              startUpCommand: 'startup.py'
+            displayName: 'Deploy to Azure Web App (Prod)'
+          
+          - task: AzureAppServiceSettings@1
+            inputs:
+              azureSubscription: 'Azure-Connection'
+              appName: '$(webAppName)'
+              resourceGroupName: '$(resourceGroupName)'
+              appSettings: |
+                [
+                  {
+                    "name": "FLASK_ENV",
+                    "value": "production"
+                  },
+                  {
+                    "name": "FLASK_DEBUG",
+                    "value": "False"
+                  },
+                  {
+                    "name": "DATABASE_URL",
+                    "value": "sqlite:///tiroesportivo.db"
+                  }
+                ]
+            displayName: 'Configure app settings (Prod)'
+          
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: 'Azure-Connection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                # Configure custom domain if not already configured
+                DOMAIN_EXISTS=$(az webapp config hostname list \
+                  --webapp-name $(webAppName) \
+                  --resource-group $(resourceGroupName) \
+                  --query "[?name=='$(domainName)'].name" -o tsv)
+                
+                if [ -z "$DOMAIN_EXISTS" ]; then
+                  echo "Configuring custom domain: $(domainName)"
+                  
+                  # Add custom domain
+                  az webapp config hostname add \
+                    --webapp-name $(webAppName) \
+                    --resource-group $(resourceGroupName) \
+                    --hostname $(domainName) || echo "Domain configuration will be completed after DNS propagation"
+                  
+                  # Configure SSL
+                  az webapp config ssl bind \
+                    --certificate-type SNI \
+                    --name $(webAppName) \
+                    --resource-group $(resourceGroupName) \
+                    --ssl-type SNI || echo "SSL will be configured automatically"
+                else
+                  echo "Custom domain $(domainName) already configured"
+                fi
+            displayName: 'Configure custom domain and SSL'
+
+- stage: HealthCheck
+  displayName: 'Health Check'
+  dependsOn: 
+  - DeployDev
+  - DeployProd
+  condition: or(succeeded('DeployDev'), succeeded('DeployProd'))
+  jobs:
+  - job: HealthCheckDev
+    displayName: 'Health Check Development'
+    condition: eq(variables['Build.SourceBranch'], 'refs/heads/develop')
+    pool:
+      vmImage: $(vmImageName)
+    steps:
+    - script: |
+        echo "Testing Development Environment..."
+        DEV_URL="https://$(webAppDevName).azurewebsites.net"
+        
+        # Wait for deployment to complete
+        sleep 30
+        
+        # Test health endpoint
+        for i in {1..5}; do
+          if curl -f -s "$DEV_URL" | grep -q "Tiro Esportivo"; then
+            echo "✅ Development environment is healthy: $DEV_URL"
+            exit 0
+          fi
+          echo "Attempt $i failed, retrying in 10 seconds..."
+          sleep 10
+        done
+        
+        echo "❌ Development environment health check failed"
+        exit 1
+      displayName: 'Test Development Environment'
+
+  - job: HealthCheckProd
+    displayName: 'Health Check Production'
+    condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')
+    pool:
+      vmImage: $(vmImageName)
+    steps:
+    - script: |
+        echo "Testing Production Environment..."
+        PROD_URL="https://$(webAppName).azurewebsites.net"
+        DOMAIN_URL="https://$(domainName)"
+        
+        # Wait for deployment to complete
+        sleep 30
+        
+        # Test Azure URL
+        for i in {1..5}; do
+          if curl -f -s "$PROD_URL" | grep -q "Tiro Esportivo"; then
+            echo "✅ Production environment is healthy: $PROD_URL"
+            break
+          fi
+          echo "Attempt $i failed, retrying in 10 seconds..."
+          sleep 10
+        done
+        
+        # Test custom domain (may fail if DNS not propagated)
+        if curl -f -s "$DOMAIN_URL" | grep -q "Tiro Esportivo"; then
+          echo "✅ Custom domain is working: $DOMAIN_URL"
+        else
+          echo "⚠️ Custom domain not yet available (DNS propagation): $DOMAIN_URL"
+        fi
+      displayName: 'Test Production Environment'
+

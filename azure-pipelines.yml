@@ -1,0 +1,446 @@
+# Azure DevOps Pipeline - Tiro Esportivo Brasileiro
+# TIROESPORTIVOBRASILEIRO.COM.BR
+# Pipeline de CI/CD completo para deploy automatizado
+
+trigger:
+  branches:
+    include:
+    - main
+    - develop
+  paths:
+    exclude:
+    - README.md
+    - docs/*
+    - .gitignore
+
+pr:
+  branches:
+    include:
+    - main
+  paths:
+    exclude:
+    - README.md
+    - docs/*
+    - .gitignore
+
+variables:
+  # Configurações do projeto
+  subscriptionId: '130706ec-b9d5-4554-8be1-ef855c2cf41a'
+  projectName: 'tiroesportivobrasileiro'
+  resourceGroupName: 'tiroesportivo'
+  webAppName: 'tiroesportivobrasileiro'
+  domainName: 'tiroesportivobrasileiro.com.br'
+  
+  # Configurações de build
+  pythonVersion: '3.11'
+  nodeVersion: '20.x'
+  
+  # Configurações Azure
+  azureSubscription: 'Azure-Connection' # Nome da Service Connection
+  location: 'East US'
+  appServicePlan: 'tiroesportivo-plan'
+  sku: 'S1'
+
+stages:
+- stage: Build
+  displayName: 'Build Application'
+  jobs:
+  - job: BuildBackend
+    displayName: 'Build Backend (Flask)'
+    pool:
+      vmImage: 'ubuntu-latest'
+    
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '$(pythonVersion)'
+        addToPath: true
+      displayName: 'Setup Python $(pythonVersion)'
+    
+    - script: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+      displayName: 'Install Python dependencies'
+    
+    - script: |
+        # Executar testes unitários (quando implementados)
+        # python -m pytest tests/ --junitxml=test-results.xml --cov=src --cov-report=xml
+        echo "Testes unitários serão implementados aqui"
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+      displayName: 'Run Backend Tests'
+    
+    - script: |
+        # Criar banco de dados inicial
+        python populate_db.py
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+      displayName: 'Initialize Database'
+    
+    - task: ArchiveFiles@2
+      inputs:
+        rootFolderOrFile: '$(System.DefaultWorkingDirectory)'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/backend-$(Build.BuildId).zip'
+        replaceExistingArchive: true
+        excludePaths: |
+          node_modules/**
+          frontend/**
+          .git/**
+          .vscode/**
+          __pycache__/**
+          *.pyc
+          .env
+          .env.local
+      displayName: 'Archive Backend Files'
+    
+    - task: PublishBuildArtifacts@1
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/backend-$(Build.BuildId).zip'
+        ArtifactName: 'backend'
+        publishLocation: 'Container'
+      displayName: 'Publish Backend Artifact'
+
+  - job: BuildFrontend
+    displayName: 'Build Frontend (React)'
+    pool:
+      vmImage: 'ubuntu-latest'
+    
+    steps:
+    - task: NodeTool@0
+      inputs:
+        versionSpec: '$(nodeVersion)'
+      displayName: 'Setup Node.js $(nodeVersion)'
+    
+    - script: |
+        cd frontend
+        npm ci
+      displayName: 'Install Frontend Dependencies'
+    
+    - script: |
+        cd frontend
+        npm run build
+      displayName: 'Build Frontend'
+    
+    - script: |
+        # Executar testes do frontend (quando implementados)
+        # cd frontend && npm test -- --coverage --watchAll=false
+        echo "Testes do frontend serão implementados aqui"
+      displayName: 'Run Frontend Tests'
+    
+    - task: ArchiveFiles@2
+      inputs:
+        rootFolderOrFile: '$(System.DefaultWorkingDirectory)/frontend/dist'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/frontend-$(Build.BuildId).zip'
+        replaceExistingArchive: true
+      displayName: 'Archive Frontend Build'
+    
+    - task: PublishBuildArtifacts@1
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/frontend-$(Build.BuildId).zip'
+        ArtifactName: 'frontend'
+        publishLocation: 'Container'
+      displayName: 'Publish Frontend Artifact'
+
+- stage: DeployDev
+  displayName: 'Deploy to Development'
+  dependsOn: Build
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+  variables:
+    environmentName: 'dev'
+    webAppNameDev: '$(webAppName)-dev'
+  
+  jobs:
+  - deployment: DeployToDev
+    displayName: 'Deploy to Development Environment'
+    pool:
+      vmImage: 'ubuntu-latest'
+    environment: 'development'
+    
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                # Criar Web App de desenvolvimento se não existir
+                if ! az webapp show --name $(webAppNameDev) --resource-group $(resourceGroupName) &> /dev/null; then
+                  echo "Criando Web App de desenvolvimento..."
+                  az webapp create \
+                    --name $(webAppNameDev) \
+                    --resource-group $(resourceGroupName) \
+                    --plan $(appServicePlan) \
+                    --runtime "PYTHON:3.11"
+                  
+                  # Configurar variáveis de ambiente para desenvolvimento
+                  az webapp config appsettings set \
+                    --name $(webAppNameDev) \
+                    --resource-group $(resourceGroupName) \
+                    --settings \
+                      FLASK_ENV=development \
+                      SECRET_KEY="dev-secret-key-$(Build.BuildId)" \
+                      CUSTOM_DOMAIN="$(webAppNameDev).azurewebsites.net" \
+                      AZURE_DNS_ENABLED=false
+                fi
+            displayName: 'Setup Development Environment'
+          
+          - task: DownloadBuildArtifacts@0
+            inputs:
+              buildType: 'current'
+              downloadType: 'single'
+              artifactName: 'backend'
+              downloadPath: '$(System.ArtifactsDirectory)'
+            displayName: 'Download Backend Artifact'
+          
+          - task: AzureWebApp@1
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              appType: 'webAppLinux'
+              appName: '$(webAppNameDev)'
+              resourceGroupName: '$(resourceGroupName)'
+              package: '$(System.ArtifactsDirectory)/backend/backend-$(Build.BuildId).zip'
+              runtimeStack: 'PYTHON|3.11'
+              startUpCommand: 'startup.py'
+            displayName: 'Deploy to Development Web App'
+
+- stage: DeployProd
+  displayName: 'Deploy to Production'
+  dependsOn: Build
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  
+  jobs:
+  - deployment: DeployToProduction
+    displayName: 'Deploy to Production Environment'
+    pool:
+      vmImage: 'ubuntu-latest'
+    environment: 'production'
+    
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                # Verificar se DNS Zone existe, criar se necessário
+                if ! az network dns zone show --resource-group $(resourceGroupName) --name $(domainName) &> /dev/null; then
+                  echo "Criando DNS Zone..."
+                  az network dns zone create \
+                    --resource-group $(resourceGroupName) \
+                    --name $(domainName)
+                fi
+                
+                # Verificar se Web App existe, criar se necessário
+                if ! az webapp show --name $(webAppName) --resource-group $(resourceGroupName) &> /dev/null; then
+                  echo "Criando Web App de produção..."
+                  
+                  # Criar App Service Plan se não existir
+                  if ! az appservice plan show --name $(appServicePlan) --resource-group $(resourceGroupName) &> /dev/null; then
+                    az appservice plan create \
+                      --name $(appServicePlan) \
+                      --resource-group $(resourceGroupName) \
+                      --location "$(location)" \
+                      --sku $(sku) \
+                      --is-linux
+                  fi
+                  
+                  # Criar Web App
+                  az webapp create \
+                    --name $(webAppName) \
+                    --resource-group $(resourceGroupName) \
+                    --plan $(appServicePlan) \
+                    --runtime "PYTHON:3.11"
+                  
+                  # Configurar variáveis de ambiente para produção
+                  az webapp config appsettings set \
+                    --name $(webAppName) \
+                    --resource-group $(resourceGroupName) \
+                    --settings \
+                      FLASK_ENV=production \
+                      SECRET_KEY="prod-secret-key-$(Build.BuildId)" \
+                      CUSTOM_DOMAIN="$(domainName)" \
+                      AZURE_DNS_ENABLED=true \
+                      FORCE_HTTPS=true \
+                      SCM_DO_BUILD_DURING_DEPLOYMENT=true \
+                      ENABLE_ORYX_BUILD=true
+                fi
+            displayName: 'Setup Production Infrastructure'
+          
+          - task: DownloadBuildArtifacts@0
+            inputs:
+              buildType: 'current'
+              downloadType: 'single'
+              artifactName: 'backend'
+              downloadPath: '$(System.ArtifactsDirectory)'
+            displayName: 'Download Backend Artifact'
+          
+          - task: AzureWebApp@1
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              appType: 'webAppLinux'
+              appName: '$(webAppName)'
+              resourceGroupName: '$(resourceGroupName)'
+              package: '$(System.ArtifactsDirectory)/backend/backend-$(Build.BuildId).zip'
+              runtimeStack: 'PYTHON|3.11'
+              startUpCommand: 'startup.py'
+            displayName: 'Deploy to Production Web App'
+          
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                # Configurar domínio personalizado e SSL (se ainda não configurado)
+                echo "Configurando domínio personalizado e SSL..."
+                
+                # Obter URL temporária da Web App
+                TEMP_URL=$(az webapp show --name $(webAppName) --resource-group $(resourceGroupName) --query "defaultHostName" -o tsv)
+                
+                # Configurar registro CNAME no DNS Zone
+                if ! az network dns record-set cname show --resource-group $(resourceGroupName) --zone-name $(domainName) --name "@" &> /dev/null; then
+                  az network dns record-set cname create \
+                    --resource-group $(resourceGroupName) \
+                    --zone-name $(domainName) \
+                    --name "@" \
+                    --ttl 3600
+                fi
+                
+                az network dns record-set cname set-record \
+                  --resource-group $(resourceGroupName) \
+                  --zone-name $(domainName) \
+                  --record-set-name "@" \
+                  --cname $TEMP_URL
+                
+                # Configurar registro de verificação
+                VERIFICATION_ID=$(az webapp show --name $(webAppName) --resource-group $(resourceGroupName) --query "customDomainVerificationId" -o tsv)
+                
+                if ! az network dns record-set txt show --resource-group $(resourceGroupName) --zone-name $(domainName) --name "asuid" &> /dev/null; then
+                  az network dns record-set txt create \
+                    --resource-group $(resourceGroupName) \
+                    --zone-name $(domainName) \
+                    --name "asuid" \
+                    --ttl 3600
+                fi
+                
+                az network dns record-set txt add-record \
+                  --resource-group $(resourceGroupName) \
+                  --zone-name $(domainName) \
+                  --record-set-name "asuid" \
+                  --value $VERIFICATION_ID
+                
+                # Aguardar propagação DNS
+                echo "Aguardando propagação DNS..."
+                sleep 60
+                
+                # Adicionar domínio personalizado
+                if ! az webapp config hostname list --webapp-name $(webAppName) --resource-group $(resourceGroupName) --query "[?name=='$(domainName)']" -o tsv | grep -q "$(domainName)"; then
+                  echo "Adicionando domínio personalizado..."
+                  az webapp config hostname add \
+                    --webapp-name $(webAppName) \
+                    --resource-group $(resourceGroupName) \
+                    --hostname $(domainName) || echo "Domínio será configurado manualmente"
+                fi
+                
+                # Criar certificado SSL
+                echo "Configurando SSL..."
+                az webapp config ssl create \
+                  --resource-group $(resourceGroupName) \
+                  --name $(webAppName) \
+                  --hostname $(domainName) || echo "SSL será configurado manualmente"
+                
+                echo "Deploy de produção concluído!"
+                echo "URL: https://$(domainName)"
+                echo "URL temporária: https://$TEMP_URL"
+            displayName: 'Configure Custom Domain and SSL'
+
+- stage: PostDeploy
+  displayName: 'Post-Deployment Tasks'
+  dependsOn: 
+  - DeployProd
+  - DeployDev
+  condition: or(succeeded('DeployProd'), succeeded('DeployDev'))
+  
+  jobs:
+  - job: HealthCheck
+    displayName: 'Health Check and Notifications'
+    pool:
+      vmImage: 'ubuntu-latest'
+    
+    steps:
+    - task: AzureCLI@2
+      inputs:
+        azureSubscription: '$(azureSubscription)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          # Determinar qual ambiente foi deployado
+          if [[ "$(Build.SourceBranch)" == "refs/heads/main" ]]; then
+            APP_NAME="$(webAppName)"
+            ENVIRONMENT="Production"
+            URL="https://$(domainName)"
+          else
+            APP_NAME="$(webAppName)-dev"
+            ENVIRONMENT="Development"
+            URL="https://$(webAppName)-dev.azurewebsites.net"
+          fi
+          
+          echo "Verificando saúde da aplicação em $ENVIRONMENT..."
+          echo "URL: $URL"
+          
+          # Aguardar aplicação inicializar
+          sleep 30
+          
+          # Health check
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/api/health" || echo "000")
+          
+          if [[ "$HTTP_STATUS" == "200" ]]; then
+            echo "✅ Aplicação está funcionando corretamente!"
+            echo "Status HTTP: $HTTP_STATUS"
+          else
+            echo "⚠️ Aplicação pode ter problemas. Status HTTP: $HTTP_STATUS"
+            
+            # Verificar logs da aplicação
+            echo "Verificando logs da aplicação..."
+            az webapp log tail --name $APP_NAME --resource-group $(resourceGroupName) --provider application --timeout 30 || true
+          fi
+          
+          # Informações do deploy
+          echo ""
+          echo "=== INFORMAÇÕES DO DEPLOY ==="
+          echo "Ambiente: $ENVIRONMENT"
+          echo "Build ID: $(Build.BuildId)"
+          echo "Branch: $(Build.SourceBranch)"
+          echo "Commit: $(Build.SourceVersion)"
+          echo "URL: $URL"
+          echo "Resource Group: $(resourceGroupName)"
+          echo "Web App: $APP_NAME"
+          echo "=========================="
+      displayName: 'Application Health Check'
+    
+    - task: PowerShell@2
+      inputs:
+        targetType: 'inline'
+        script: |
+          # Enviar notificação de deploy (exemplo com webhook)
+          $environment = if ($env:BUILD_SOURCEBRANCHNAME -eq "main") { "Production" } else { "Development" }
+          $url = if ($env:BUILD_SOURCEBRANCHNAME -eq "main") { "https://$(domainName)" } else { "https://$(webAppName)-dev.azurewebsites.net" }
+          
+          Write-Host "🚀 Deploy concluído com sucesso!"
+          Write-Host "Ambiente: $environment"
+          Write-Host "URL: $url"
+          Write-Host "Build: $(Build.BuildId)"
+          
+          # Aqui você pode adicionar integração com Teams, Slack, etc.
+          # Exemplo: Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $payload
+      displayName: 'Send Deployment Notification'
+

@@ -1,0 +1,114 @@
+# =============================================================================
+# TIRO ESPORTIVO BRASILEIRO - CLOUD SHELL REQUIREMENTS
+# =============================================================================
+# Dependências específicas para execução no Azure Cloud Shell
+# =============================================================================
+
+# Azure CLI Extensions (já pré-instaladas no Cloud Shell)
+# azure-cli
+# azure-cli-core
+
+# Azure DevOps CLI Extension
+# Instalada automaticamente pelos scripts: az extension add --name azure-devops
+
+# Python Dependencies (para desenvolvimento local se necessário)
+flask==2.3.3
+flask-cors==4.0.0
+flask-jwt-extended==4.5.3
+werkzeug==2.3.7
+python-dotenv==1.0.0
+bcrypt==4.0.1
+
+# Database
+sqlite3  # Built-in Python module
+
+# Utilities
+requests==2.31.0
+jinja2==3.1.2
+
+# Development Tools (opcionais)
+pytest==7.4.2
+pytest-flask==1.2.0
+
+# Node.js Dependencies (gerenciadas via npm)
+# Estas são instaladas automaticamente no frontend:
+# - react
+# - vite
+# - axios
+# - react-router-dom
+
+# =============================================================================
+# FERRAMENTAS PRÉ-INSTALADAS NO AZURE CLOUD SHELL
+# =============================================================================
+# ✅ Azure CLI (az)
+# ✅ Git
+# ✅ Python 3.x
+# ✅ Node.js & npm
+# ✅ Bash
+# ✅ PowerShell Core
+# ✅ Docker (disponível)
+# ✅ kubectl
+# ✅ Terraform
+# ✅ jq
+# ✅ curl
+# ✅ wget
+# ✅ zip/unzip
+# ✅ SSH client
+# ✅ OpenSSL
+# ✅ Vim/Nano editors
+
+# =============================================================================
+# COMANDOS ÚTEIS NO CLOUD SHELL
+# =============================================================================
+# Verificar versões:
+# az --version
+# python --version
+# node --version
+# git --version
+
+# Configurar Git (se necessário):
+# git config --global user.name "Seu Nome"
+# git config --global user.email "seu@email.com"
+
+# Verificar subscription ativa:
+# az account show
+
+# Listar subscriptions disponíveis:
+# az account list
+
+# Trocar subscription:
+# az account set --subscription "subscription-id"
+
+# =============================================================================
+# ESTRUTURA DE ARQUIVOS RECOMENDADA NO CLOUD SHELL
+# =============================================================================
+# ~/tiroesportivo/
+# ├── cloud-shell/                 # Scripts do Cloud Shell
+# │   ├── setup-cloudshell.sh      # Setup inicial
+# │   ├── upload-project.sh        # Upload e deploy
+# │   └── configure-pipelines.sh   # Configurar DevOps
+# ├── shooting-sports-app/         # Backend Flask
+# ├── shooting-sports-frontend/    # Frontend React
+# ├── azure-deployment/            # Configurações Azure
+# └── azure-devops/               # Pipelines DevOps
+
+# =============================================================================
+# LIMITAÇÕES DO CLOUD SHELL
+# =============================================================================
+# ⚠️ Sessão expira após 20 minutos de inatividade
+# ⚠️ Armazenamento limitado (5GB no Azure Files)
+# ⚠️ Não persiste instalações de software entre sessões
+# ⚠️ Algumas portas podem estar bloqueadas
+# ⚠️ Performance limitada para builds grandes
+
+# =============================================================================
+# VANTAGENS DO CLOUD SHELL
+# =============================================================================
+# ✅ Ambiente pré-configurado
+# ✅ Autenticação automática com Azure
+# ✅ Ferramentas sempre atualizadas
+# ✅ Acesso de qualquer lugar
+# ✅ Não requer instalação local
+# ✅ Integração nativa com Azure
+# ✅ Suporte a Bash e PowerShell
+

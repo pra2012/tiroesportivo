@@ -1,0 +1,43 @@
+# azure-app-service.json - Configuração do Azure App Service
+{
+  "name": "shooting-sports-app",
+  "location": "East US",
+  "resourceGroup": "shooting-sports-rg",
+  "appServicePlan": {
+    "name": "shooting-sports-plan",
+    "sku": "B1",
+    "tier": "Basic"
+  },
+  "runtime": {
+    "name": "python",
+    "version": "3.11"
+  },
+  "appSettings": {
+    "FLASK_ENV": "production",
+    "SCM_DO_BUILD_DURING_DEPLOYMENT": "true",
+    "ENABLE_ORYX_BUILD": "true",
+    "DATABASE_URL": "sqlite:///instance/database.db",
+    "WEBSITES_ENABLE_APP_SERVICE_STORAGE": "true",
+    "WEBSITES_PORT": "8000"
+  },
+  "connectionStrings": {},
+  "deployment": {
+    "source": "github",
+    "branch": "main",
+    "buildCommand": "pip install -r requirements.txt && python populate_db.py"
+  },
+  "scaling": {
+    "minInstances": 1,
+    "maxInstances": 3,
+    "rules": [
+      {
+        "metricName": "CpuPercentage",
+        "operator": "GreaterThan",
+        "threshold": 70,
+        "scaleAction": "Increase",
+        "instanceCount": 1
+      }
+    ]
+  }
+}
+
