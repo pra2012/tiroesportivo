@@ -34,6 +34,8 @@ Configure os Name Servers fornecidos no seu registrador de domínio.
 ### **Passo 5: DevOps (1 min)**
 ```bash
 ./cloud-shell/configure-pipelines.sh
+# Organização: Paulo (padrão)
+# PAT: seu-personal-access-token
 ```
 **Resultado**: CI/CD configurado
 

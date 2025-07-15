@@ -251,7 +251,7 @@ Execute o script de configuração:
 ```
 
 **Informações solicitadas:**
-- **Organização Azure DevOps**: nome da sua organização
+- **Organização Azure DevOps**: Paulo (padrão) ou nome da sua organização
 - **Personal Access Token**: token gerado no passo anterior
 
 **O que este script faz:**
@@ -266,7 +266,7 @@ Execute o script de configuração:
 
 **⚠️ Este passo deve ser feito manualmente no portal Azure DevOps:**
 
-1. Acesse: `https://dev.azure.com/SUA-ORG/TiroEsportivoBrasileiro/_settings/adminservices`
+1. Acesse: `https://dev.azure.com/Paulo/TiroEsportivoBrasileiro/_settings/adminservices`
 2. Clique em "New service connection"
 3. Selecione "Azure Resource Manager"
 4. Selecione "Service principal (automatic)"
@@ -278,7 +278,7 @@ Execute o script de configuração:
 
 ### **Passo 4: Executar Pipelines**
 
-1. Acesse: `https://dev.azure.com/SUA-ORG/TiroEsportivoBrasileiro/_build`
+1. Acesse: `https://dev.azure.com/Paulo/TiroEsportivoBrasileiro/_build`
 2. Execute o pipeline `TiroEsportivo-Infrastructure` primeiro
 3. Após sucesso, execute `TiroEsportivo-CI-CD`
 

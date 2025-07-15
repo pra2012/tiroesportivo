@@ -6,7 +6,7 @@
 set -e
 
 # Parâmetros
-ORGANIZATION_NAME=${Paulo}
+ORGANIZATION_NAME=${1}
 PROJECT_NAME=${2:-"TiroEsportivoBrasileiro"}
 SUBSCRIPTION_ID=${3:-"130706ec-b9d5-4554-8be1-ef855c2cf41a"}
 RESOURCE_GROUP_NAME=${4:-"tiroesportivo"}
