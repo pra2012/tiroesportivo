@@ -16,6 +16,7 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Configurações fixas para Cloud Shell
+ORGANIZATION_NAME="Paulo"
 SUBSCRIPTION_ID="130706ec-b9d5-4554-8be1-ef855c2cf41a"
 RESOURCE_GROUP_NAME="tiroesportivo"
 PROJECT_NAME="TiroEsportivoBrasileiro"
